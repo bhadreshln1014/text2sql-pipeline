@@ -1,0 +1,47 @@
+# =============================================================================
+# Text-to-SQL Pipeline Configuration
+# =============================================================================
+
+# LLM settings — change model to switch providers (zero code changes)
+# Examples: gemini/gemini-2.0-flash, ollama/qwen2.5:32b, anthropic/claude-sonnet-4-6, groq/llama-3.3-70b-versatile
+model: "groq/llama-3.3-70b-versatile"
+fallback_model: "groq/llama-3.3-70b-versatile"
+temperature: 0
+
+# Ollama settings (only needed when using ollama/* models)
+ollama_base_url: "http://localhost:11434"
+
+# Retry settings
+max_retries_requirements: 3
+max_retries_execution: 3
+
+# Paths (relative to text2sql/)
+spider_data_path: "../spider2-snow/spider2-snow.jsonl"
+database_path: "../spider2-snow/resource/databases"
+documents_path: "../spider2-snow/resource/documents"
+outputs_path: "data/outputs"
+learnings_path: "data/learnings.md"
+hard_failures_path: "data/hard_failures"
+
+# Snowflake (loaded from credential file)
+snowflake_credential_path: "../bhadresh/snowflake_credential.json"
+
+# Evaluation
+gold_dir: "../spider2-snow/evaluation_suite/gold/exec_result"
+eval_standard_path: "../spider2-snow/evaluation_suite/gold/spider2snow_eval.jsonl"
+
+# Context budget (characters)
+ddl_budget: 16000
+docs_budget: 10000
+learnings_budget: 6000
+exploration_transcript_budget: 6000
+
+# Learnings truncation
+max_learnings_entries: 40
+
+# Exploration
+max_exploration_steps: 3
+
+# Execution
+query_timeout_base: 60
+query_timeout_max: 300

@@ -1,0 +1,37 @@
+### Database Exploration Transcript
+
+=== VERIFIED COLUMN ROSTER (SOURCE OF TRUTH) ===
+ETHEREUM_BLOCKCHAIN.BLOCKS: timestamp (NUMBER), number (NUMBER), hash (TEXT), parent_hash (TEXT), nonce (TEXT), sha3_uncles (TEXT), logs_bloom (TEXT), transactions_root (TEXT), state_root (TEXT), receipts_root (TEXT), miner (TEXT), difficulty (NUMBER), total_difficulty (NUMBER), size (NUMBER), extra_data (TEXT), gas_limit (NUMBER), gas_used (NUMBER), transaction_count (NUMBER)
+ETHEREUM_BLOCKCHAIN.CONTRACTS: address (TEXT), bytecode (TEXT), function_sighashes (VARIANT), is_erc20 (BOOLEAN), is_erc721 (BOOLEAN), block_timestamp (NUMBER), block_number (NUMBER), block_hash (TEXT)
+ETHEREUM_BLOCKCHAIN.LOGS: log_index (NUMBER), transaction_hash (TEXT), transaction_index (NUMBER), address (TEXT), data (TEXT), topics (VARIANT), block_timestamp (NUMBER), block_number (NUMBER), block_hash (TEXT)
+ETHEREUM_BLOCKCHAIN.TOKENS: address (TEXT), symbol (TEXT), name (TEXT), decimals (TEXT), total_supply (TEXT), block_timestamp (NUMBER), block_number (NUMBER), block_hash (TEXT)
+ETHEREUM_BLOCKCHAIN.TOKEN_TRANSFERS: token_address (TEXT), from_address (TEXT), to_address (TEXT), value (TEXT), transaction_hash (TEXT), log_index (NUMBER), block_timestamp (NUMBER), block_number (NUMBER), block_hash (TEXT)
+ETHEREUM_BLOCKCHAIN.TRACES: transaction_hash (TEXT), transaction_index (NUMBER), from_address (TEXT), to_address (TEXT), value (NUMBER), input (TEXT), output (TEXT), trace_type (TEXT), call_type (TEXT), reward_type (TEXT), gas (NUMBER), gas_used (NUMBER), subtraces (NUMBER), trace_address (TEXT), error (TEXT), status (NUMBER), block_timestamp (NUMBER), block_number (NUMBER), block_hash (TEXT)
+ETHEREUM_BLOCKCHAIN.TRANSACTIONS: hash (TEXT), nonce (NUMBER), transaction_index (NUMBER), from_address (TEXT), to_address (TEXT), value (NUMBER), gas (NUMBER), gas_price (NUMBER), input (TEXT), receipt_cumulative_gas_used (NUMBER), receipt_gas_used (NUMBER), receipt_contract_address (TEXT), receipt_root (TEXT), receipt_status (NUMBER), block_timestamp (NUMBER), block_number (NUMBER), block_hash (TEXT)
+=== END ROSTER — DO NOT USE COLUMNS NOT LISTED ABOVE ===
+
+**Agent Recon Query:**
+```sql
+SELECT * FROM ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES LIMIT 1;
+```
+
+**Database Result:**
+[{"transaction_hash": "0x03b85e8e14bd404a1a2c15cbde921dcd21249d8bffc9b378c2cce62d925b5e54", "transaction_index": 11, "from_address": "0xb09f8a62c6681b0c739dfde7221bfe8f2da3f128", "to_address": "0x7f6e12cee775346d6ba776510e25d703279886f3", "value": "0E-9", "input": "0x", "output": null, "trace_type": "call", "call_type": "delegatecall", "reward_type": null, "gas": 0, "gas_used": null, "subtraces": 0, "trace_address": "3867", "error": "Out of gas", "status": 0, "block_timestamp": 1475369605000000, "block_number": 2363392, "block_hash": "0x99fbd59028ed558a6cfb1061788165736dbca4e3c70babbef68acace880caa34"}]
+
+**Agent Recon Query:**
+```sql
+SELECT * FROM ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRANSACTIONS LIMIT 1;
+```
+
+**Database Result:**
+[{"hash": "0xc499d6ba82f798ceaf165cec2e8af8a58871f2e728105afdf27c3babdaf803e2", "nonce": 372, "transaction_index": 15, "from_address": "0x74a6c4823d81cbd6393e5957ccec128799a3f0c2", "to_address": "0xbff68676836ee64f26845a21a9dcbdd89512bf29", "value": "0E-9", "gas": 7340032, "gas_price": 3000000000, "input": "0x5ea84b33000000000000000000000000c7f7295d1bb957db59f4105eeb1320fca7ede75d00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000e40000000000000000000000000000000000000000000000000000000000000006e0000000000000000000000003b58a35694aa15ddcaddbfd69aae213354e481920000000000000000000000000ef25426a04f7bfb249d9c4ffc95dd312831787d0000000000000000000000000015d694f582f10f77f8fa96966aa88818355e18000000000000000000000000002645db1397e8a8a04e0e97dfab317af6e9b135000000000000000000000000004f1b23cb02b61ac063922153c311bb6575433700000000000000000000000000633acf2dd6e43592579c7dc7ce10657a7b037f00000000000000000000000000eb7f63272b7693013a80d9bf04b9a440f1a017000000000000000000000000029d501cfc5a44b3d271f37c76dd427b3ac502ba00000000000000000000000003bafca12df7d1ba64b27dd53c60c1575651c05a000000000000000000000000045f0df00f25133bcc25e083296027905ee8b7220000000000000000000000000483997cad5ac588f2216f95638c194537f44061000000000000000000000000055e9fc83e23303e57db26d8caf5b55be4dac99100000000000000000000000005f9e52fa6c93aeac1dae2f3b3cb880a89a0329f000000000000000000000000062637ee5e41091e3890b8938afec0791143083300000000000000000000000007c59125b0c62686330ec66db89b8e1a2e597e8f000000000000000000000000085091ea11788715afa5c8ce916060e886dcf48b000000000000000000000000090ec0fc9fe7f0095b495217d28539ece07f82730000000000000000000000000a63203df483b1b40ede6caeb9bb3ab3d087ea1c0000000000000000000000000ac4617911b1cb7039d4920aa639e65aa6ca3d620000000000000000000000000b81d1bb6fe98516d7276f8a95fa119ac68c22b60000000000000000000000000cbb31af047e32f3267d92d9a0a335f87cadc94a0000000000000000000000000d609b940e207b28653d739541aa73df57f873fc00000000000000000
+... [SYSTEM WARNING: Result truncated to 2000 chars. Query INFORMATION_SCHEMA.COLUMNS for exact column names or rewrite with specific column names and LIMIT 5.]
+
+**Agent Recon Query:**
+```sql
+SELECT * FROM ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS LIMIT 1;
+```
+
+**Database Result:**
+[{"timestamp": 1530279523000000, "number": 5875076, "hash": "0xcf5326c1ac7a9bc76f90ec9b7188903c49977e2dbcb749012592f1f9166aba62", "parent_hash": "0x7d1daeed5bb2bc25bfa2adea08f12ac34ced255613b1f81e05901c365f4b1d32", "nonce": "0x0ac4077c0b9326e4", "sha3_uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347", "logs_bloom": "0xe1023fc1247c5120022420803014c60a40047141181001080308213a8603830ca58000048800412411bc0820a1080228e603441200288082002040085124b24041806319220004898189080e9018a105300000009bec690000017161938000000a00810a1221840090b3011810042c00003b038ba50910080001809c642ac18000e50c20002e2000100a0448840782d600e000b14a40000050142811840600093680181c60c3ac8108400b0511cdd0
+... (exploration transcript truncated)
