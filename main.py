@@ -182,7 +182,6 @@ async def run_pipeline(instance_ids: list[str], config: dict, dataset: dict):
                     has_error=True,
                     error_type="exploration_syntax",
                     error_message=exp_err["error"],
-                    error_query=exp_err["sql"]
                 )
                 
                 learning = await error_to_learning(err_result, exp_err["sql"], column_roster)
@@ -269,6 +268,30 @@ async def run_pipeline(instance_ids: list[str], config: dict, dataset: dict):
                 })
 
                 error = check_error(exec_result)
+
+                # Silent failure: query ran cleanly but returned nothing useful
+                if not error.has_error and exec_result.data is not None:
+                    if exec_result.data.empty:
+                        error = ErrorCheckResult(
+                            has_error=True,
+                            error_type="empty_result",
+                            error_message=(
+                                "Query executed successfully but returned 0 rows. "
+                                "The WHERE clause, JOIN conditions, or filter logic is "
+                                "eliminating all rows. Revisit the filtering and join keys."
+                            ),
+                        )
+                        print(f"⚠️  Silent failure: 0 rows returned (attempt {attempt + 1}/{max_retries_exec})")
+                    elif exec_result.data.notna().sum().sum() == 0:
+                        error = ErrorCheckResult(
+                            has_error=True,
+                            error_type="null_result",
+                            error_message=(
+                                "Query executed successfully but all result values are NULL. "
+                                "Check VARIANT path expressions, type casts, and column references."
+                            ),
+                        )
+                        print(f"⚠️  Silent failure: all-NULL result (attempt {attempt + 1}/{max_retries_exec})")
 
                 if not error.has_error:
                     execution_passed = True
@@ -417,6 +440,8 @@ async def main(args):
     # Determine which instances to run
     if args.instance:
         instance_ids = [args.instance]
+    elif args.instances:
+        instance_ids = args.instances
     else:
         instance_ids = list(dataset.keys())
         if args.limit:
@@ -437,6 +462,7 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=30, help="Max questions to run")
     parser.add_argument("--model", type=str, default=None, help="Override config model")
     parser.add_argument("--instance", type=str, default=None, help="Run single instance")
+    parser.add_argument("--instances", type=str, nargs="+", default=None, help="Run specific instances")
     parser.add_argument("--config", type=str, default="config.yaml", help="Config file path")
     parser.add_argument("--verbose", action="store_true", default=False, help="Verbose logging")
     args = parser.parse_args()

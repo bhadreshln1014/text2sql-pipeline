@@ -130,9 +130,11 @@ def _format_failed_subtasks(failed_subtasks: list) -> str:
 
 
 def _clean_sql_output(sql: str) -> str:
-    """Remove markdown wrappers and CoT from LLM SQL output."""
+    """Remove markdown wrappers and thinking blocks from LLM SQL output."""
     sql = sql.strip()
     match = re.search(r"```(?:sql)?\s*\n?(.*?)\n?\s*```", sql, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
+    # No sql block — strip any <thinking>...</thinking> block and return remainder
+    sql = re.sub(r"<thinking>.*?</thinking>", "", sql, flags=re.DOTALL | re.IGNORECASE).strip()
     return sql

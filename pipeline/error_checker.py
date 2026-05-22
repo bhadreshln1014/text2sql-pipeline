@@ -2,7 +2,7 @@
 Error Checker — classifies Snowflake execution errors.
 
 Pure string matching on error messages — no LLM needed.
-Covers verified Spider2-Snow failure modes.
+Covers common Snowflake execution failure modes.
 """
 
 import logging

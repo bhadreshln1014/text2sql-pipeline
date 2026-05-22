@@ -4,8 +4,8 @@
 
 # LLM settings — change model to switch providers (zero code changes)
 # Examples: gemini/gemini-2.0-flash, ollama/qwen2.5:32b, anthropic/claude-sonnet-4-6, groq/llama-3.3-70b-versatile
-model: "groq/llama-3.3-70b-versatile"
-fallback_model: "groq/llama-3.3-70b-versatile"
+model: "mistral/mistral-large-latest"
+fallback_model: "mistral/mistral-large-latest"
 temperature: 0
 
 # Ollama settings (only needed when using ollama/* models)
@@ -31,16 +31,17 @@ gold_dir: "../spider2-snow/evaluation_suite/gold/exec_result"
 eval_standard_path: "../spider2-snow/evaluation_suite/gold/spider2snow_eval.jsonl"
 
 # Context budget (characters)
-ddl_budget: 16000
-docs_budget: 10000
-learnings_budget: 6000
-exploration_transcript_budget: 6000
+ddl_budget: 32000
+docs_budget: 8000
+learnings_budget: 0
+exploration_transcript_budget: 0
+exploration_query_budget: 0
 
 # Learnings truncation
-max_learnings_entries: 40
+max_learnings_entries: 0
 
 # Exploration
-max_exploration_steps: 3
+max_exploration_steps: 5
 
 # Execution
 query_timeout_base: 60

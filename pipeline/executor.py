@@ -75,7 +75,7 @@ class Executor:
 
         Args:
             sql: SQL query string.
-            db_id: Database identifier (e.g., "GA360").
+            db_id: Database identifier (e.g., "MY_DATABASE").
             timeout: Query timeout in seconds. Auto-estimated if None.
 
         Returns:
@@ -170,13 +170,6 @@ class Executor:
         if "UNION ALL" in sql_upper:
             complexity += sql_upper.count("UNION ALL") * 15
 
-        # Known large table patterns
-        large_patterns = ["PATENTS", "PUBLICATIONS", "EVENTS_", "CRYPTO", "BLOCKCHAIN"]
-        for pattern in large_patterns:
-            if pattern in sql_upper:
-                complexity += 90
-                break
-
         timeout = min(self.timeout_base + complexity, self.timeout_max)
         if timeout > self.timeout_base:
             logger.info(f"Estimated timeout: {timeout}s (complexity bonus: {complexity}s)")
@@ -190,5 +183,13 @@ class Executor:
         pattern = r"```(?:sql)?\s*\n?(.*?)\n?\s*```"
         match = re.search(pattern, sql, re.DOTALL)
         if match:
-            return match.group(1).strip()
+            sql = match.group(1).strip()
+        # Strip trailing semicolons
+        sql = sql.rstrip('; \n\t')
+        # If multiple statements remain, take only the first to avoid error 000008
+        if ';' in sql:
+            first_stmt = sql.split(';')[0].strip()
+            if first_stmt:
+                logger.warning("Multi-statement SQL detected; using only first statement")
+                sql = first_stmt
         return sql

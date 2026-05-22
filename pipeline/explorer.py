@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+from collections import defaultdict
 from typing import List, Tuple
 from utils.llm import llm_call
 from pipeline.executor import Executor
@@ -49,51 +50,93 @@ class Explorer:
 
         system_prompt = (
             "You are an AI Data Engineer building a SQL query for Snowflake.\n"
-            "You do not have the exact JSON schema of the tables. You must explore the database to find it.\n"
+            "You do not have the full schema of the tables. You must explore the database to understand it.\n"
             "You can execute reconnaissance queries to explore the schema.\n"
             "If you want to execute a query, write ONLY the SQL query wrapped in ```sql ... ``` block and NOTHING ELSE.\n"
-            "DO NOT write the final query here. Write simple queries like:\n"
-            "- SHOW TABLES IN SCHEMA IDC.IDC_V17;\n"
-            "- SELECT * FROM IDC.IDC_V17.TABLE_NAME LIMIT 1;\n"
+            "DO NOT write the final query here. Write simple reconnaissance queries to understand the schema.\n"
             "We will execute your query and return the results to you.\n"
-            "Once you perfectly understand the schema (especially nested JSON keys) needed to answer the user's question, "
+            "Once you perfectly understand the schema needed to answer the user's question, "
             "output the exact word 'READY' (without quotes, no SQL block)."
         )
 
         subtask_list = "\n".join([f"- {s['desc']}" for s in subtasks])
 
-        # Fix 1: Schema Grounding Step
-        table_names = set()
-        for match in re.finditer(r"(?:--|Table:)\s+[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.([A-Za-z0-9_]+)", context.get('ddl', '')):
-            table_names.add(match.group(1))
-        
+        # Schema Grounding Step — query ALL tables in the database (not just those in DDL)
+        # so the COLUMN ROSTER covers every schema even when the DDL budget is exhausted.
         grounding_block = ""
-        if table_names:
-            tables_csv = ", ".join(f"'{t}'" for t in table_names)
-            grounding_sql = f"""
-                SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE
-                FROM {db_id}.INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME IN ({tables_csv})
-                ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
-            """
-            try:
-                res = self.executor.execute(grounding_sql, db_id, timeout=30)
-                if res.success and not res.data.empty:
-                    grounding_block = "=== VERIFIED COLUMN ROSTER (SOURCE OF TRUTH) ===\n"
-                    current_table = None
-                    for _, row in res.data.iterrows():
-                        tbl = f"{row['TABLE_SCHEMA']}.{row['TABLE_NAME']}"
-                        if tbl != current_table:
-                            if current_table is not None:
-                                grounding_block += "\n"
-                            current_table = tbl
-                            grounding_block += f"{tbl}: "
-                            grounding_block += f"{row['COLUMN_NAME']} ({row['DATA_TYPE']})"
-                        else:
-                            grounding_block += f", {row['COLUMN_NAME']} ({row['DATA_TYPE']})"
-                    grounding_block += "\n=== END ROSTER — DO NOT USE COLUMNS NOT LISTED ABOVE ===\n\n"
-            except Exception as e:
-                logger.warning(f"Schema grounding query failed: {e}")
+        try:
+            all_tables_res = self.executor.execute(
+                f"SELECT TABLE_SCHEMA, TABLE_NAME"
+                f" FROM {db_id}.INFORMATION_SCHEMA.TABLES"
+                f" WHERE TABLE_TYPE = 'BASE TABLE'"
+                f" ORDER BY TABLE_SCHEMA, TABLE_NAME",
+                db_id,
+                timeout=30,
+            )
+            if all_tables_res.success and not all_tables_res.data.empty:
+                # Deduplicate partition groups (same pattern as context_loader):
+                # keep one representative per prefix shared by >=3 tables with numeric suffix.
+                partition_groups: dict = defaultdict(list)
+                non_partitioned: list = []
+                for _, row in all_tables_res.data.iterrows():
+                    schema, table = row["TABLE_SCHEMA"], row["TABLE_NAME"]
+                    m = re.match(r"^(.+?)_(\d{4,8})$", table)
+                    if m:
+                        partition_groups[(schema, m.group(1))].append(table)
+                    else:
+                        non_partitioned.append((schema, table))
+
+                # (schema, representative_table, display_label)
+                roster_tables: list = [(s, t, None) for s, t in non_partitioned]
+                for (schema, prefix), tables in sorted(partition_groups.items()):
+                    if len(tables) >= 3:
+                        rep = sorted(tables)[0]
+                        label = f"{schema}.{prefix}_* ({len(tables)} partitions, representative: {rep})"
+                        roster_tables.append((schema, rep, label))
+                    else:
+                        roster_tables.extend([(schema, t, None) for t in tables])
+
+                if roster_tables:
+                    conditions = " OR ".join(
+                        f"(TABLE_SCHEMA = '{s}' AND TABLE_NAME = '{t}')"
+                        for s, t, _ in roster_tables
+                    )
+                    cols_res = self.executor.execute(
+                        f"SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE"
+                        f" FROM {db_id}.INFORMATION_SCHEMA.COLUMNS"
+                        f" WHERE {conditions}"
+                        f" ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION",
+                        db_id,
+                        timeout=60,
+                    )
+                    if cols_res.success and not cols_res.data.empty:
+                        label_lookup = {
+                            (s, t): (lbl if lbl else f"{s}.{t}")
+                            for s, t, lbl in roster_tables
+                        }
+                        grounding_block = "=== VERIFIED COLUMN ROSTER (SOURCE OF TRUTH) ===\n"
+                        grounding_block += (
+                            'NOTE: Columns shown with double-quotes (e.g. "my_col") are '
+                            "case-sensitive and MUST be referenced with double-quotes in SQL "
+                            '(e.g. t."my_col"). Unquoted uppercase columns are case-insensitive.\n'
+                        )
+                        current_key = None
+                        for _, row in cols_res.data.iterrows():
+                            key = (row["TABLE_SCHEMA"], row["TABLE_NAME"])
+                            col_name = row["COLUMN_NAME"]
+                            data_type = row["DATA_TYPE"]
+                            sql_col = f'"{col_name}"' if col_name != col_name.upper() else col_name
+                            if key != current_key:
+                                if current_key is not None:
+                                    grounding_block += "\n"
+                                current_key = key
+                                grounding_block += f"{label_lookup.get(key, f'{key[0]}.{key[1]}')}: "
+                                grounding_block += f"{sql_col} ({data_type})"
+                            else:
+                                grounding_block += f", {sql_col} ({data_type})"
+                        grounding_block += "\n=== END ROSTER — DO NOT USE COLUMNS NOT LISTED ABOVE ===\n\n"
+        except Exception as e:
+            logger.warning(f"Schema grounding query failed: {e}")
 
         transcript = "### Database Exploration Transcript\n\n"
         # Prepend COLUMN ROSTER to transcript so the Generator sees it
@@ -157,6 +200,7 @@ class Explorer:
 
             # Fix 2: Explorer Guard Layer (auto LIMIT 5)
             if sql_to_run.lower().startswith("select") and not re.search(r"\blimit\s+\d+", sql_to_run, re.IGNORECASE):
+                sql_to_run = sql_to_run.rstrip().rstrip(";")
                 sql_to_run += "\nLIMIT 5"
                 transcript += "**System:** Automatically appended `LIMIT 5` to prevent context blowout.\n\n"
 
@@ -176,9 +220,9 @@ class Explorer:
                 exploration_errors.append({"sql": sql_to_run, "error": result.error_message})
 
             # Fix 3: Hard Context Budget Enforcement with Actionable Warning
-            budget_per_query = 2000
-            if len(query_result) > budget_per_query:
-                query_result = query_result[:budget_per_query] + "\n... [SYSTEM WARNING: Result truncated to 2000 chars. Query INFORMATION_SCHEMA.COLUMNS for exact column names or rewrite with specific column names and LIMIT 5.]"
+            budget_per_query = self.config.get("exploration_query_budget", 2000)
+            if budget_per_query > 0 and len(query_result) > budget_per_query:
+                query_result = query_result[:budget_per_query] + "\n... [SYSTEM WARNING: Result truncated. Rewrite your query to be more targeted.]"
 
             transcript += f"**Database Result:**\n{query_result}\n\n"
             history += f"You ran:\n```sql\n{sql_to_run}\n```\nResult:\n{query_result}\n\n"
@@ -188,7 +232,7 @@ class Explorer:
 
         # Cap transcript size so it doesn't dominate the generator prompt
         budget = self.config.get("exploration_transcript_budget", 6000)
-        if len(transcript) > budget:
+        if budget > 0 and len(transcript) > budget:
             transcript = transcript[:budget] + "\n... (exploration transcript truncated)\n"
             logger.info(f"Exploration transcript truncated to {budget} chars")
 

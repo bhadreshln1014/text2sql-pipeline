@@ -67,7 +67,7 @@ def read_learnings(
         if not content:
             return ""
 
-        if max_entries is not None:
+        if max_entries is not None and max_entries > 0:
             entries = content.split(_ENTRY_SEPARATOR)
             entries = [e.strip() for e in entries if e.strip()]
             if len(entries) > max_entries:

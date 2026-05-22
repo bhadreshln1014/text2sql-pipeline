@@ -1,13 +1,13 @@
 """
 Context Loader — loads DDL schemas and external documentation for a given database.
 
-Handles date-partitioned tables (GA4 pattern) specially.
 Applies token budgets to keep context within LLM limits.
 """
 
 import os
 import re
 import logging
+from collections import defaultdict
 from typing import Optional
 
 import pandas as pd
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class ContextLoader:
-    """Loads DDL and external docs for a given Spider2-Snow database."""
+    """Loads DDL and external docs for a given database."""
 
     def __init__(self, config: dict):
         self.database_path = config.get("database_path", "../spider2-snow/resource/databases")
@@ -72,15 +72,27 @@ class ContextLoader:
             block += f"Full path format: {db_id}.{schema_name}.TABLE_NAME\n"
             block += "IMPORTANT: Quote column names exactly as shown in DDL.\n\n"
 
-            # Detect date-partitioned tables (GA4 pattern: EVENTS_YYYYMMDD)
-            events_tables = [t for t in table_names if re.match(r"^EVENTS_\d{8}$", t)]
+            # Detect generically partitioned tables: any prefix shared by >=3 tables
+            # where the suffix is purely numeric (4-8 digits) — covers any date/shard scheme.
+            partition_groups = defaultdict(list)
+            non_partitioned = []
+            for t in table_names:
+                m = re.match(r"^(.+?)_(\d{4,8})$", t)
+                if m:
+                    partition_groups[m.group(1)].append(t)
+                else:
+                    non_partitioned.append(t)
 
-            if events_tables:
-                block += self._format_partitioned_tables(
-                    df, db_id, schema_name, events_tables, table_names
-                )
-            else:
-                block += self._format_regular_tables(df, db_id, schema_name, table_names)
+            true_partitions = {p: ts for p, ts in partition_groups.items() if len(ts) >= 3}
+            for prefix, tables in partition_groups.items():
+                if prefix not in true_partitions:
+                    non_partitioned.extend(tables)
+
+            for prefix, part_tables in true_partitions.items():
+                block += self._format_partitioned_tables(df, db_id, schema_name, prefix, part_tables)
+
+            if non_partitioned:
+                block += self._format_regular_tables(df, db_id, schema_name, non_partitioned)
 
             schema_blocks.append(block)
 
@@ -93,7 +105,7 @@ class ContextLoader:
 
         # Enforce budget across all schemas combined — cut at a table boundary
         # so the LLM never receives a half-written CREATE TABLE statement
-        if len(ddl_text) > self.ddl_budget:
+        if self.ddl_budget > 0 and len(ddl_text) > self.ddl_budget:
             cut = ddl_text.rfind("\n\n--", 0, self.ddl_budget)
             if cut == -1:
                 cut = self.ddl_budget
@@ -107,33 +119,21 @@ class ContextLoader:
         df: pd.DataFrame,
         db_id: str,
         schema_name: str,
-        events_tables: list,
-        all_tables: list,
+        prefix: str,
+        part_tables: list,
     ) -> str:
-        """Format date-partitioned tables concisely."""
-        sorted_events = sorted(events_tables)
-        first_date = sorted_events[0].replace("EVENTS_", "")
-        last_date = sorted_events[-1].replace("EVENTS_", "")
+        """Format a group of identically-structured partitioned tables concisely."""
+        sorted_tables = sorted(part_tables)
+        suffixes = [re.match(r"^.+?_(\d{4,8})$", t).group(1) for t in sorted_tables]
 
-        text = f"DATE-PARTITIONED TABLES ({len(events_tables)} total):\n"
-        text += f"- Pattern: EVENTS_YYYYMMDD\n"
-        text += f"- Date range: {first_date} to {last_date}\n"
-        text += f"- Example tables: EVENTS_{first_date}, EVENTS_{last_date}\n"
-        text += f"- MUST use UNION ALL for multiple dates (no wildcards!)\n\n"
+        text = f"PARTITIONED TABLES — prefix '{prefix}' ({len(part_tables)} tables):\n"
+        text += f"- Pattern: {prefix}_<KEY> (key range: {suffixes[0]} to {suffixes[-1]})\n"
+        text += f"- Use UNION ALL to query across multiple partitions (no wildcards).\n\n"
 
-        # Show 1 sample table DDL
-        sample_row = df[df["table_name"] == sorted_events[0]].iloc[0]
-        text += f"SAMPLE TABLE STRUCTURE (all date tables identical):\n"
-        text += f"Table: {db_id}.{schema_name}.EVENTS_YYYYMMDD\n"
+        sample_row = df[df["table_name"] == sorted_tables[0]].iloc[0]
+        text += f"SAMPLE STRUCTURE (all '{prefix}' tables share this schema):\n"
+        text += f"Table: {db_id}.{schema_name}.{prefix}_<KEY>\n"
         text += f"{sample_row['DDL']}\n\n"
-
-        # List non-event tables if any
-        other_tables = [t for t in all_tables if t not in events_tables]
-        if other_tables:
-            text += f"OTHER TABLES: {', '.join(other_tables)}\n\n"
-            for _, row in df[df["table_name"].isin(other_tables)].iterrows():
-                text += f"-- {db_id}.{schema_name}.{row['table_name']}\n"
-                text += f"{row['DDL']}\n\n"
 
         return text
 
@@ -183,7 +183,7 @@ class ContextLoader:
                 toc_str = "## DOCUMENTATION TABLE OF CONTENTS\n" + "\n".join(toc) + "\n\n"
                 content = toc_str + content
 
-            if len(content) > self.docs_budget:
+            if self.docs_budget > 0 and len(content) > self.docs_budget:
                 content = content[: self.docs_budget] + "\n... (truncated)\n"
                 logger.info(f"Docs truncated to {self.docs_budget} chars")
 

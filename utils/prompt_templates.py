@@ -1,150 +1,112 @@
-"""
-Prompt Templates — all LLM prompts centralized in one place.
-
-Each prompt is a string template with .format() placeholders.
-"""
+"""Prompt Templates — all LLM prompts in one place."""
 
 # =============================================================================
-# DECOMPOSER — NLQ → subtask tree
+# DECOMPOSER
 # =============================================================================
 
-DECOMPOSER_SYSTEM = """You are a task decomposition expert. Your job is to break down natural language questions about data into semantic subtasks.
+DECOMPOSER_SYSTEM = "Break down data questions into semantic subtasks. Return ONLY valid JSON."
 
-Rules:
-- Think about WHAT the question asks before HOW to query it.
-- Do NOT reference any database schema, table names, or SQL syntax.
-- Organize subtasks in a hierarchy: business intent first, data requirements second, computation details last.
-- Return ONLY valid JSON — no markdown, no explanation."""
+DECOMPOSER_PROMPT = """Break this question into subtasks.
 
-DECOMPOSER_PROMPT = """Break down this question into semantic subtasks.
+QUESTION: {nlq}
 
-QUESTION:
-{nlq}
-
-Return a JSON array of subtasks. Each subtask has:
-- "id": integer (starting from 1)
-- "description": what this subtask accomplishes (business language, not SQL)
-- "parent_id": integer or null (null for root-level tasks)
-- "level": 0 = business intent, 1 = data requirement, 2 = computation detail
-
-Example output:
-[
-  {{"id": 1, "description": "Identify the time period of interest", "parent_id": null, "level": 0}},
-  {{"id": 2, "description": "Filter for relevant records within that period", "parent_id": 1, "level": 1}},
-  {{"id": 3, "description": "Count distinct entities in the filtered set", "parent_id": 2, "level": 2}}
-]
+Return a JSON array where each item has:
+- "id": integer
+- "description": what to accomplish (plain language, no SQL)
+- "parent_id": integer or null
+- "level": 0=intent, 1=data need, 2=computation
 
 Return ONLY the JSON array:"""
 
 # =============================================================================
-# GENERATOR — Context + subtasks → SQL
+# GENERATOR
 # =============================================================================
 
-GENERATOR_SYSTEM = """You are a Snowflake SQL expert. Generate precise, executable SQL queries.
+GENERATOR_SYSTEM = """You are a Snowflake SQL expert. Write a single executable SQL query.
 
-Critical Snowflake rules:
-- Quote ALL column names that have quotes in DDL (e.g., "column_name")
-- Use table aliases and qualify ALL columns (e.g., t."column_name")
-- VARIANT column access: column:path::TYPE (e.g., "abstract":en::STRING)
-- For GA4/date-partitioned tables: NEVER use wildcards — use UNION ALL with specific table names
-- Use ILIKE for case-insensitive text matching
-- NEVER use correlated subqueries — Snowflake raises "Unsupported subquery type" for correlated subqueries that reference outer columns or contain aggregation. Rewrite every correlated subquery as a CTE (WITH clause) or a JOIN instead.
-- First, write your step-by-step reasoning inside a <thinking> block.
-- Then, output the final executable SQL wrapped in a ```sql block."""
+- Output reasoning in <thinking> tags, then SQL in a ```sql block.
+- Qualify all columns with table aliases.
+- Lowercase columns in the COLUMN ROSTER are case-sensitive — double-quote them."""
 
-GENERATOR_PROMPT = """Generate a Snowflake SQL query to answer this question.
+GENERATOR_PROMPT = """Write a Snowflake SQL query to answer the question.
 
 SCHEMA:
 {ddl}
 
 {docs_section}
 
-LEARNINGS FROM PAST MISTAKES:
+{exploration_transcript}
+
+LEARNINGS:
 {learnings}
 
-{exploration_transcript}
-    
-SUBTASKS TO SATISFY (your SQL must address ALL of these):
+SUBTASKS:
 {subtask_tree}
 
-QUESTION:
-{nlq}
+QUESTION: {nlq}
 
-Output your reasoning in a <thinking> block, followed by the SQL wrapped in a ```sql block.
-CRITICAL: You MUST output the ```sql block at the end. Do not just output the thinking block!"""
+Output <thinking> then ```sql:"""
 
-GENERATOR_RETRY_PROMPT = """Your previous SQL attempt failed verification. Fix it.
+GENERATOR_RETRY_PROMPT = """Fix your SQL — it failed requirements.
 
 SCHEMA:
 {ddl}
 
 {docs_section}
 
-LEARNINGS FROM PAST MISTAKES:
-{learnings}
-
 {exploration_transcript}
 
-SUBTASKS TO SATISFY:
+LEARNINGS:
+{learnings}
+
+SUBTASKS:
 {subtask_tree}
 
-QUESTION:
-{nlq}
+QUESTION: {nlq}
 
-PREVIOUS ATTEMPT (attempt {attempt}):
+PREVIOUS SQL (attempt {attempt}):
 ```
 {previous_sql}
 ```
 
-VERIFICATION RESULT — score: {score}
 FAILED SUBTASKS:
 {failed_subtasks}
 
-Fix the SQL to address the failed subtasks specifically. Output your reasoning in a <thinking> block, followed by the SQL wrapped in a ```sql block.
-CRITICAL: You MUST output the ```sql block at the end. Do not just output the thinking block!"""
+Output <thinking> then ```sql:"""
 
-GENERATOR_ERROR_RETRY_PROMPT = """Your previous SQL caused a Snowflake execution error. Fix it.
+GENERATOR_ERROR_RETRY_PROMPT = """Fix your SQL — it hit a Snowflake error.
 
 SCHEMA:
 {ddl}
 
 {docs_section}
 
-LEARNINGS FROM PAST MISTAKES:
-{learnings}
-
 {exploration_transcript}
 
-SUBTASKS TO SATISFY:
+LEARNINGS:
+{learnings}
+
+SUBTASKS:
 {subtask_tree}
 
-QUESTION:
-{nlq}
+QUESTION: {nlq}
 
-PREVIOUS ATTEMPT (attempt {attempt}):
+PREVIOUS SQL (attempt {attempt}):
 ```
 {previous_sql}
 ```
 
-EXECUTION ERROR ({error_type}):
-{error_message}
+ERROR ({error_type}): {error_message}
 
-Fix the SQL to resolve this error. Output your reasoning in a <thinking> block, followed by the SQL wrapped in a ```sql block.
-CRITICAL: You MUST output the ```sql block at the end. Do not just output the thinking block!"""
+Output <thinking> then ```sql:"""
 
 # =============================================================================
-# REQUIREMENTS CHECKER — SQL vs subtask tree
+# REQUIREMENTS CHECKER
 # =============================================================================
 
-REQUIREMENTS_SYSTEM = """You are a strict SQL requirements checker. Evaluate whether a SQL query satisfies each subtask independently.
+REQUIREMENTS_SYSTEM = "Check whether SQL satisfies each subtask. Return ONLY valid JSON."
 
-Rules:
-- Evaluate each subtask on its own — do NOT assess holistically.
-- Be strict — partial satisfaction counts as failure.
-- Look at the actual SQL logic, not just surface-level keyword matching.
-- Return ONLY valid JSON — no markdown, no explanation."""
-
-REQUIREMENTS_PROMPT = """Evaluate whether this SQL satisfies each subtask.
+REQUIREMENTS_PROMPT = """Does this SQL satisfy each subtask?
 
 SQL:
 ```
@@ -154,73 +116,40 @@ SQL:
 SUBTASKS:
 {subtask_tree}
 
-For each subtask, return:
-- "subtask_id": the subtask's id
-- "satisfied": true or false
-- "reason": brief explanation of why it is or isn't satisfied
-
-Return ONLY a JSON array:
-[
-  {{"subtask_id": 1, "satisfied": true, "reason": "SQL correctly filters for the time period"}},
-  {{"subtask_id": 2, "satisfied": false, "reason": "SQL uses COUNT(*) but subtask requires COUNT(DISTINCT ...)"}}
-]"""
+Return a JSON array — one entry per subtask:
+[{{"subtask_id": 1, "satisfied": true, "reason": "..."}}]"""
 
 # =============================================================================
-# ERROR TO LEARNING — raw Snowflake error → generalizable rule
+# ERROR TO LEARNING
 # =============================================================================
 
-ERROR_TO_LEARNING_SYSTEM = """You are a Snowflake SQL knowledge extractor. Convert specific errors into precise, table-scoped rules.
+ERROR_TO_LEARNING_SYSTEM = "Convert a Snowflake SQL error into a generalizable rule. Return ONLY valid JSON."
 
-Rules:
-- If a COLUMN ROSTER is provided, cross-reference the failed identifier against the roster.
-- For "invalid identifier" errors: identify which table the column was incorrectly pulled from, which table actually contains it, and write a scoped rule.
-- For other errors: extract the general Snowflake SQL rule that was violated.
-- Return ONLY valid JSON — no markdown, no explanation."""
-
-ERROR_TO_LEARNING_PROMPT = """A Snowflake SQL query failed with this error:
+ERROR_TO_LEARNING_PROMPT = """A Snowflake SQL query failed.
 
 ERROR TYPE: {error_type}
-ERROR MESSAGE:
-{error_message}
+ERROR: {error_message}
 
-FAILED SQL:
+SQL:
 ```
 {failed_sql}
 ```
 
 {column_roster}
 
-Diagnose the error against the schema above. Return JSON:
-{{
-  "error_type": "{error_type}",
-  "pattern": "What went wrong — name the specific table and column if applicable",
-  "fix": "How to fix it — name the correct table to use if applicable",
-  "example": "Brief SQL example showing the fix"
-}}"""
+Return JSON:
+{{"error_type": "...", "pattern": "what went wrong (general)", "fix": "how to avoid it (general)", "example": "brief SQL example"}}"""
 
 # =============================================================================
-# TAXONOMY — batch failure analysis → generalizable learnings
+# TAXONOMY
 # =============================================================================
 
-TAXONOMY_SYSTEM = """You are a SQL error analyst. Classify failures and extract reusable patterns.
+TAXONOMY_SYSTEM = "Extract reusable SQL error patterns from failures. Return ONLY valid JSON."
 
-Rules:
-- Extract ONLY patterns reusable across different questions and schemas.
-- Do NOT record anything specific to a particular question's values or schema.
-- Classify each failure: wrong_join, wrong_filter, wrong_aggregation, wrong_column, schema_error, other.
-- Return ONLY valid JSON — no markdown, no explanation."""
-
-TAXONOMY_PROMPT = """Analyze these SQL failures and extract generalizable learnings.
+TAXONOMY_PROMPT = """Find generalizable patterns in these SQL failures.
 
 FAILURES:
 {failures}
 
-For each distinct pattern you identify, return:
-{{
-  "error_type": "wrong_join | wrong_filter | wrong_aggregation | wrong_column | schema_error | other",
-  "pattern": "General description of what goes wrong",
-  "fix": "General rule for how to avoid this",
-  "example": "Brief generic SQL example"
-}}
-
-Return a JSON array of learnings (deduplicate — merge similar patterns):"""
+Return a JSON array of distinct patterns (deduplicate):
+[{{"error_type": "wrong_join|wrong_filter|wrong_aggregation|wrong_column|schema_error|other", "pattern": "...", "fix": "...", "example": "..."}}]"""
